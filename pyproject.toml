@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghostwire"
+version = "0.1.0"
+description = "Stealth runtime instrumentation for web reverse engineering, over the Chrome DevTools Protocol."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = [
+    "websocket-client>=1.8",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+ghostwire-mcp = "ghostwire.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["ghostwire*"]

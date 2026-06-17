@@ -1,0 +1,2 @@
+[console_scripts]
+ghostwire-mcp = ghostwire.mcp_server:main
