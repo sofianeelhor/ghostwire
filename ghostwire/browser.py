@@ -44,9 +44,13 @@ def find_chrome():
 
 
 # few non-default switches → less to fingerprint. site isolation left ON so cross-origin
-# iframes (captcha/anti-bot engines) stay separate targets and auto-attach.
+# iframes (captcha/anti-bot engines) stay separate targets and auto-attach. the throttling
+# switches are process-level (not JS-observable) and stop a backgrounded target's timers from
+# dropping to 1Hz when we open a second page.
 FLAGS = ("--remote-debugging-pipe=JSON", "--no-first-run", "--no-default-browser-check",
-         "--disable-blink-features=AutomationControlled", "--disable-features=Translate")
+         "--disable-blink-features=AutomationControlled", "--disable-features=Translate",
+         "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
+         "--disable-renderer-backgrounding")
 
 
 class Browser:

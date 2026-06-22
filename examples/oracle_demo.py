@@ -1,21 +1,6 @@
-"""
-oracle_demo.py — ground-truth proof of the verification oracle (charter §2, P0).
-
-The scenario is the JsDeObsBench failure mode in miniature: an agent "reads" an obfuscated
-signer and proposes a reimplementation that is syntactically fine and *looks* right but is
-semantically wrong. A model alone would trust it. ghostwire does not — it checks the
-candidate against ground truth and returns a concrete counterexample.
-
-We:
-  1. serve a page whose sign(user, pin) runs on a timer (the runtime boundary),
-  2. hook it with capture_returns=True to build a corpus of observed (input -> output) pairs,
-  3. gw_verify a CORRECT candidate            -> verified: true,
-  4. gw_verify a subtly WRONG candidate       -> verified: false + counterexample,
-  5. gw_verify using ONLY fresh live inputs   -> works with no prior corpus,
-  6. save a replayable artifact.
-
-Run:  python3 examples/oracle_demo.py
-"""
+# minimal oracle check: hook a signer, build a corpus of (input -> output) pairs, then verify
+# a correct candidate (passes), a subtly-wrong one that drops a +1 (fails with a counterexample),
+# and a correct one against fresh live inputs with no corpus.
 import sys, os, time, threading, http.server, socketserver, json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

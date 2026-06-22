@@ -1,13 +1,6 @@
-"""
-multitarget_demo.py — prove ghostwire follows the whole target graph.
-
-The page spawns a Web Worker (a separate CDP target) from a Blob. The worker defines a
-function, runs it on a timer, and does its own fetch. ghostwire auto-attaches to the
-worker and: (1) lists it as a target, (2) captures the worker's own source, (3) captures
-the worker's network request, (4) hooks a function inside the worker.
-
-Run:  python3 examples/multitarget_demo.py
-"""
+# page spawns a Blob Web Worker (a separate CDP target) that defines a function, runs it on
+# a timer, and fetches. ghostwire auto-attaches and lists it, captures its source + network,
+# and hooks a function inside it.
 import sys, os, time, threading, http.server, socketserver
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -1,166 +1,92 @@
 # ghostwire
 
-Stealth runtime instrumentation for web reverse engineering, built on the Chrome
-DevTools Protocol. It hooks functions, captures network and dynamically generated code,
-and follows the whole target graph (page, workers, iframes) without injecting anything
-into the page. Designed to be driven by Claude Code over MCP as the analyst loop.
+Stealth runtime instrumentation for reverse-engineering very hostile client-side JavaScript anti-bot, captcha, fingerprinting, fraud and payment SDKs. It hooks functions, follows the whole target graph (page, workers, iframes), and observes resolved runtime values, without injecting anything into the page. It is built to be driven by an agent, and its one job is to tell that agent when the agent is wrong.
 
+![ghostwire CLI](docs/screenshots/cli.png)
+<!-- screenshot: a `python3 -m ghostwire <url>` run showing targets / scripts / captures -->
 
-## Why CDP instead of in-page injection
+## The idea
 
-Hooks are set with `Debugger.setBreakpointOnFunctionCall` on the live function object.
-The object is never replaced or wrapped, so the hook is invisible to the page's own
-defenses: `fn.toString()` native-code checks, Proxy traps, monkeypatch detection. That
-invisibility is the point. It is what lets us instrument hostile, anti-debug, obfuscated
-client-side JS (anti-bot, captcha, fingerprinting, fraud and payment SDKs).
+An LLM reading obfuscated JavaScript is right about syntax almost always and right about behaviour about three times in five ([JsDeObsBench](https://github.com/Ch3nYe/JsDeObsBench): ~97% syntactic, ~61% semantic). So reading is a hypothesis is usually never a fact. ghostwire is the part that checks it.
 
-Other consequences of working at the protocol level:
-
-- Real scope. `evaluateOnCallFrame` reads the actual closure, not an isolated world.
-- Network is captured regardless of when (or whether) page scripts wrapped fetch/XHR.
-- Beats static deob. It observes resolved values, so it cracks runtime-rotated string
-  arrays and bytecode VMs that static tools cannot.
-- Whole target graph. Auto-attach follows workers and out-of-process iframes, where the
-  interesting code (crypto, anti-bot engines) usually runs.
-
-## Status
-
-| Piece | State |
-|---|---|
-| CDP client (thread-safe reply/event demux, session routing) | done (`ghostwire/cdp.py`) |
-| Browser launch/attach, stealth flags, real Chrome | done (`ghostwire/browser.py`) |
-| Engine: auto-attach to workers/iframes, per-session domains | done (`ghostwire/engine.py`) |
-| Invisible function tracer, hook any target by url | done (`ghostwire/tracer.py`) |
-| scripts probe: eval/new Function/worker/injected code | done (`ghostwire/probes/scripts.py`) |
-| network probe: req/resp/body/initiator, all targets | done (`ghostwire/probes/network.py`) |
-| High-level API (`attach()` + `Inspector`, trace export) | done (`ghostwire/api.py`) |
-| CLI (`python -m ghostwire URL ...`) | done (`ghostwire/__main__.py`) |
-| MCP server, 10 tools for Claude Code | done (`ghostwire/mcp_server.py`) |
-| Packaging (pyproject, entry point, LICENSE) | done |
-| **verification oracle** (`gw_verify`: candidate vs ground-truth corpus + live target) | **done (`ghostwire/oracle.py`)** |
-| return-value capture (input→output pairs into a per-boundary corpus) | done (`tracer.py`, `capture_returns=`) |
-| selftest, capture, multitarget, oracle demos | done (all PASS) |
-| anti-anti-debug (`setBlackboxPatterns` wired) | partial, needs hardening on real targets |
-| dataflow / followReturn (consumer-frame, async) | todo |
-| crypto-logger (plaintext/ciphertext/key at the JS boundary) | todo |
-| deobfuscator (string-array dump: obfuscator.io + basE91) | todo |
-| vm-tracer (dispatch-loop log to auto-disasm) | todo |
-
-## Run it
-
-No install. The core has no third-party dependencies — it drives Chrome over an OS pipe
-(`--remote-debugging-pipe`), so there is no debugging port to open and no WebSocket library
-to install. Clone the repo and run:
-
-```bash
-python3 -m ghostwire https://target/ --seconds 5 --grep token --out trace.json
-```
-
-Only the MCP server needs a package (`pip install mcp`); everything else runs from the
-checkout.
-
-## Use it on any target
-
-One-liner API:
+You observe ground truth at a runtime boundary, a decoder, a signer, a crypto call. And form a candidate reimplementation. `gw_verify` runs that candidate, in an isolated page that cannot see the real function, against the captured ground-truth corpus **and** against the live target for fresh inputs, and hands back a structured diff with concrete counterexamples. Iterate until the diff is empty. Nothing inferred is trusted until then.
 
 ```python
 import ghostwire
-with ghostwire.attach("https://target/", blackbox=[r"antidebug"]) as gw:
+with ghostwire.attach("https://target/") as gw:
+    gw.wait(1)
+    gw.hook("window.sign", capture_returns=True, label="sign")   # observed (input -> output) pairs
     gw.wait(3)
-    gw.hook("window.someFn")                       # root page
-    gw.hook("engineInternal", target_url="worker.js")  # inside a worker/iframe
-    gw.wait(2)
-    gw.save("trace.json")                          # replayable artifact
-    print(gw.targets(), len(gw.scripts.scripts), len(gw.net.all()), len(gw.captures))
+    gw.verify("window.sign", "(u,p)=>btoa(u+':'+(p*7+1))",        # your reimplementation
+              label="sign", fresh_inputs=[["zoe", 0], ["", 1]])
+    # -> {"verified": false, "mismatches": [{"input": ["zoe",0], "expected": "...", "got": "..."}], ...}
 ```
 
-CLI:
+![gw_verify catching a wrong reimplementation](docs/screenshots/verify.png)
+<!-- screenshot: gw_verify output with verified=false and a counterexample -->
+
+## Why CDP over a pipe, not in-page injection
+
+Hooks are set with `Debugger.setBreakpointOnFunctionCall` on the live function object. The object is never replaced or wrapped, so the hook is invisible to the page's own defenses: `fn.toString()` native-code checks, Proxy traps, monkeypatch detection. That invisibility is the whole point — it is what lets you instrument code that is actively trying to detect you.
+
+Chrome is driven over `--remote-debugging-pipe`, not a WebSocket. There is no open debugging port for the page to discover, and the core has no third-party dependencies — clone and run.
+Other consequences/reasons of working at the protocol level:
+
+- `evaluateOnCallFrame` reads the actual closure, not an isolated world like in playwright.
+- Beats static deob. It reads resolved values, so it cracks runtime-rotated string arrays and bytecode VMs that static tools and source-reading models get wrong.
+- Whole target graph. Flat-mode auto-attach follows workers and out-of-process iframes, where the crypto and anti-bot engines actually run.
+
+## Run it
+
+The core has no dependencies (yet); only the MCP server needs `mcp`.
 
 ```bash
 python3 -m ghostwire https://target/ --seconds 5 --grep token --out trace.json
 python3 -m ghostwire https://target/ --hook 'window.fn' --hook 'enc@@worker.js' --headful
 ```
 
-Demos (also a regression suite):
+## Cracking a rotated string array
 
-```bash
-python3 examples/selftest.py         # invisible hook + live args
-python3 examples/capture_demo.py     # hidden code (eval/new Function) + network + hook
-python3 examples/multitarget_demo.py # worker auto-attach: source + network + hook
-python3 examples/oracle_demo.py      # corpus capture + gw_verify catches a wrong reimpl
+`obfuscator.io` rotates its string array at load, so the array order in the source is a lie. A static reader, or a model like opus 6.8 copying the source array, reimplements the decoder against the wrong order and is silently wrong. ghostwire drives the page's own decoder over the full index range to get the real mapping, and the oracle catches the wrong reimplementation:
+
+```
+// example
+ground truth (runtime, rotated):  0=craig 1=patched 2=osint 3=guest 4=admin ...
+static view  (source order):      0=guest 1=admin   2=token 3=secret 4=login ...
+static order matches runtime for 0/10 indices
+
+naive static reimpl    -> verified=False (matched 0/10)
+  counterexample: decode(0) is 'craig', naive gives 'guest'
+runtime-derived reimpl -> verified=True  (matched 10/10)
 ```
 
-## Use from Claude Code
+![runtime order vs source order](docs/screenshots/obfuscated.png)
+<!-- screenshot: examples/obfuscated_strings.py output -->
 
 ```bash
-pip install mcp     # the only dependency, and only for the server
+python3 examples/obfuscated_strings.py   # the case above, end to end
+python3 examples/selftest.py             # invisible hook + live args, with an invisibility proof
+python3 examples/capture_demo.py         # eval / new Function / POST body, all captured
+python3 examples/multitarget_demo.py     # worker auto-attach: source + network + in-worker hook
+python3 examples/oracle_demo.py          # gw_verify catches a reimpl that drops a +1
+```
+
+## From Claude Code
+
+```bash
+pip install mcp
 claude mcp add ghostwire -- python3 -m ghostwire.mcp_server   # run from the repo checkout
 ```
 
-Tools: `gw_attach(url, headless, proxy, blackbox)`, `gw_targets()`,
-`gw_hook(expr, target_url, capture_returns, label)`, `gw_captures()`,
-`gw_corpus(label, limit, full)`, `gw_verify(real_fn_expr, candidate, label, fresh_inputs, ...)`,
-`gw_scripts(search, dynamic_only, full)`, `gw_network(url_substr)`, `gw_eval(expr, target_url)`,
-`gw_navigate(url)`, `gw_save(path)`, `gw_close()`.
+Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
 
-The loop: ghostwire does deterministic, invisible capture across all targets. Claude forms
-a hypothesis, sets the next hook, reads the captures, refines, then synthesizes a
-reimplementation — and `gw_verify` is the gate: it runs that candidate, in an isolated
-page, against the observed ground-truth corpus **and** against the live function for fresh
-inputs, returning a structured diff with concrete counterexamples. Nothing inferred is
-trusted until the diff is empty. See `skills/verify-reimplementation/`.
 
-### The verification oracle (`gw_verify`)
+## Status
 
-The differentiator. An LLM reading obfuscated JS is right about *syntax* ~97% of the time
-but about *behaviour* only ~61% (JsDeObsBench). `gw_verify` is what catches the other 39%:
+Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, CLI, MCP server
 
-```python
-with ghostwire.attach(url) as gw:
-    gw.wait(1); gw.hook("window.sign", capture_returns=True, label="sign"); gw.wait(3)
-    gw.corpus("sign")                                  # observed (input -> output) pairs
-    gw.verify("window.sign", "(u,p)=>btoa(u+':'+(p*7+1))", label="sign",
-              fresh_inputs=[["zoe", 0], ["", 1]])      # -> {verified, tested, mismatches, ...}
-```
+Next: origin trace (where a value came from), followReturn dataflow (where it goes next),
+live-object search/patch, heap-diff, crypto-boundary logger, string-array/VM dumpers.
 
-Captured pairs are saved into the trace artifact (`gw_save`) so any claim can be
-re-verified offline.
-
-## Layout
-
-```
-ghostwire/
-  cdp.py        CDP transport
-  browser.py    launch/attach Chrome
-  engine.py     auto-attach + session routing + probe wiring
-  tracer.py     invisible function hooks + (input->output) corpus capture
-  oracle.py     verification oracle: candidate vs corpus + live target, structured diff
-  probes/
-    scripts.py  all parsed code, incl. runtime-generated
-    network.py  all traffic, all targets
-  api.py        attach() + Inspector (high-level reuse API)
-  __main__.py   CLI
-  mcp_server.py MCP tools
-examples/
-  selftest.py  capture_demo.py  multitarget_demo.py  oracle_demo.py
-skills/
-  verify-reimplementation/   Agent Skill: hypothesize -> capture -> verify recipe
-pyproject.toml  LICENSE  requirements.txt  .mcp.json
-```
-
-## Caveats
-
-It is an arms race. CDP presence itself is detectable, so the stealth layer is ongoing
-maintenance, not a one-time fix. Anything an LLM infers from traces must be checked
-against ground truth before it is trusted.
-
-## Next
-
-P0 (the verification oracle) is done and is the gate on every "I understood it" claim.
-Next, in priority order: P1 origin-trace/BDHS ("where did this value come from?"),
-P2 followReturn dataflow ("where does it go next?"), then the crypto-logger and
-string-array/VM deobfuscator probes — each feeding pairs straight into the oracle corpus.
-Primary acceptance target stays the Continental captcha on patched.to (where we hold the
-hand-derived answer key): success is the agent loop re-deriving that key autonomously
-through MCP and `gw_verify` confirming equivalence against the live target.
-```
+It is an arms race: CDP presence is itself detectable, so stealth is ongoing maintenance.
+ghostwire is a security-research instrument — for analysis on systems you are authorized to test, the same category as Frida and mitmproxy blablabla ect

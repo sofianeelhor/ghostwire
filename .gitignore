@@ -5,3 +5,6 @@ __pycache__/
 .idea/
 *.trace.json
 examples/*.trace.json
+.playwright-mcp/
+skill/
+.venv/

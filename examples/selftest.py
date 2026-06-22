@@ -1,12 +1,5 @@
-"""
-selftest.py — ground-truth proof that ghostwire's invisible hook works.
-
-Serves a page whose secret(user, pin) runs on a timer, hooks it via CDP, and captures
-the live arguments — then proves the hook is INVISIBLE: the page's own
-window.secret.toString() is byte-identical to the source (no wrapper, no monkeypatch).
-
-Run:  python3 examples/selftest.py
-"""
+# hook secret(user,pin) on a timer, capture live args, then prove the hook is invisible:
+# the page's own secret.toString() is byte-identical to the source (no wrapper, no monkeypatch).
 import sys, os, time, threading, http.server, socketserver, urllib.request, json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

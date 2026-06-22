@@ -1,13 +1,5 @@
-"""
-capture_demo.py — prove ghostwire sees what static tools / devtools-by-hand miss.
-
-The page builds code at runtime via eval() and new Function() (invisible to "view
-source" and the Network tab), POSTs a JSON body, and computes values on a timer.
-ghostwire captures: (1) the runtime-generated source, (2) the POST request + body,
-(3) live args of the hidden function — all at once, invisibly.
-
-Run:  python3 examples/capture_demo.py
-"""
+# page builds code at runtime (eval / new Function), POSTs a body, computes on a timer.
+# ghostwire captures the runtime-generated source, the POST body, and live args at once.
 import sys, os, time, json, threading, http.server, socketserver
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

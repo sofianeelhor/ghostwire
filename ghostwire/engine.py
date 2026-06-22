@@ -1,6 +1,21 @@
-import threading
+import re, sys, platform as _platform, threading
 
 from .browser import Browser
+
+
+def _ua_metadata(user_agent, full_version):
+    major = full_version.split(".")[0]
+    name, arch = {"darwin": ("macOS", "arm64"), "win32": ("Windows", "x86")}.get(sys.platform, ("Linux", "x86"))
+    plat_version = ".".join((_platform.mac_ver()[0] or "").split(".")[:3]) if sys.platform == "darwin" else ""
+    grease = "Not)A;Brand"
+    return {
+        "brands": [{"brand": grease, "version": "24"}, {"brand": "Chromium", "version": major},
+                   {"brand": "Google Chrome", "version": major}],
+        "fullVersionList": [{"brand": grease, "version": "24.0.0.0"},
+                            {"brand": "Chromium", "version": full_version},
+                            {"brand": "Google Chrome", "version": full_version}],
+        "platform": name, "platformVersion": plat_version, "architecture": arch, "model": "", "mobile": False,
+    }
 
 
 class Engine:
@@ -10,6 +25,8 @@ class Engine:
         self.sessions = {}
         self.page_session = None
         self.blackbox = None
+        self.user_agent = None               # set when launched headless, to drop the HeadlessChrome tell
+        self.ua_metadata = None
         self.probes = []
         self.lock = threading.Lock()
         self.private = set()                 # target ids kept out of the probes
@@ -32,6 +49,7 @@ class Engine:
 
     def start(self, blackbox=None):
         self.blackbox = blackbox
+        self._setup_stealth()
         self.page_target = self.cdp.send("Target.createTarget", {"url": "about:blank"})["targetId"]
         self.cdp.send("Target.attachToTarget", {"targetId": self.page_target, "flatten": True})
         if not self.page_attached.wait(timeout=10):
@@ -42,6 +60,22 @@ class Engine:
         self.cdp.send("Page.navigate", {"url": url}, session_id=self.page_session)
         return self
 
+    def _setup_stealth(self):
+        try:
+            version = self.cdp.send("Browser.getVersion")
+        except Exception:
+            version = {}
+        ua = version.get("userAgent", "")
+        if "Headless" in ua:                 # --headless=new still reports HeadlessChrome in the UA + client hints
+            self.user_agent = ua.replace("HeadlessChrome", "Chrome")
+            full = (re.search(r"Chrome/([\d.]+)", version.get("product", "")) or
+                    re.search(r"Chrome/([\d.]+)", self.user_agent) or [None, "120.0.0.0"])[1]
+            self.ua_metadata = _ua_metadata(self.user_agent, full)
+        try:
+            self.cdp.send("Target.setDiscoverTargets", {"discover": True})  # so targetInfoChanged keeps urls fresh
+        except Exception:
+            pass
+
     def _enable(self, sid, is_page):
         def enable(method, params=None):
             try:
@@ -50,6 +84,9 @@ class Engine:
                 return None
         for domain in ("Runtime", "Debugger", "Network"):
             enable(domain + ".enable")
+        if self.user_agent:                  # set before the target runs, so initial requests are clean too
+            enable("Network.setUserAgentOverride",
+                   {"userAgent": self.user_agent, "userAgentMetadata": self.ua_metadata})
         if is_page:
             enable("Page.enable")
         if self.blackbox:
@@ -104,7 +141,7 @@ class Engine:
                     for sid, info in self.sessions.items() if info.get("targetId") not in self.private]
 
     def open_isolated_page(self):
-        target = self.cdp.send("Target.createTarget", {"url": "about:blank"})["targetId"]
+        target = self.cdp.send("Target.createTarget", {"url": "about:blank", "background": True})["targetId"]
         with self.lock:
             self.private.add(target)
         sid = self.cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
