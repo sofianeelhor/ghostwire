@@ -7,7 +7,10 @@ import json, time
 # Fields are read from snapshot.meta, never hardcoded — Chrome versions differ (e.g. some drop
 # trace_node_id). Retainer (reverse-edge) and edge-offset indexes are built lazily, once.
 
-NUMERIC_TYPES = ("string", "number")
+# V8 lazily flattens "a"+"b": a freshly built value is a "concatenated string" (or a
+# "sliced string" from .slice) and only becomes a flat "string" once accessed, so a value
+# search that wants to catch runtime-built tokens must match all three.
+VALUE_TYPES = ("string", "concatenated string", "sliced string", "number")
 STRONG_EDGES = ("property", "internal", "element", "context")
 NAMED_EDGES = ("property", "internal", "context", "shortcut", "hidden")
 
@@ -114,10 +117,38 @@ class Snapshot:
         return [(frm, edge_type, self._edge_label(edge_type, raw))
                 for frm, edge_type, raw in self._retainers.get(node, [])]
 
+    def resolve_string(self, node, depth=0):
+        # a concatenated string is named "(concatenated string)" with internal first/second
+        # edges to its parts; a sliced string points at a parent. resolve to the real value.
+        kind = self.type(node)
+        if kind == "concatenated string" and depth < 64:
+            first = second = ""
+            for edge_type, raw, to in self.edges_of(node):
+                if edge_type == "internal":
+                    label = self._edge_label(edge_type, raw)
+                    if label == "first":
+                        first = self.resolve_string(to, depth + 1)
+                    elif label == "second":
+                        second = self.resolve_string(to, depth + 1)
+            return first + second
+        if kind == "sliced string" and depth < 64:
+            for edge_type, raw, to in self.edges_of(node):
+                if edge_type == "internal" and self._edge_label(edge_type, raw) == "parent":
+                    return self.resolve_string(to, depth + 1)
+        return self.name(node)
+
     def find_value(self, value):
         wanted = str(value)
-        return [node for node in range(self.node_count)
-                if self.type(node) in NUMERIC_TYPES and self.name(node) == wanted]
+        hits = []
+        for node in range(self.node_count):
+            kind = self.type(node)
+            if kind == "string" or kind == "number":
+                if self.name(node) == wanted:
+                    hits.append(node)
+            elif kind == "concatenated string" or kind == "sliced string":
+                if self.resolve_string(node) == wanted:
+                    hits.append(node)
+        return hits
 
     def retaining_path(self, node, max_depth=8):
         path, seen, current = [], set(), node

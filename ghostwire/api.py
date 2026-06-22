@@ -3,13 +3,15 @@ import json, time
 from .engine import Engine
 from .tracer import Tracer
 from .oracle import Oracle
+from .origin import OriginTracer
 from .heap import take_snapshot
 from .probes import ScriptWatcher, NetLog
 
 
 class Inspector:
-    def __init__(self, engine, scripts, net, tracer, oracle):
+    def __init__(self, engine, scripts, net, tracer, oracle, origin):
         self.engine, self.scripts, self.net, self.tracer, self.oracle = engine, scripts, net, tracer, oracle
+        self.origin_tracer = origin
 
     def targets(self):
         return self.engine.targets()
@@ -47,6 +49,11 @@ class Inspector:
     def find_objects(self, value=None, constructor=None, key=None, target_url=None, limit=50):
         return self.snapshot(target_url).find_objects(value=value, constructor=constructor, key=key, limit=limit)
 
+    def origin(self, value, enter, trigger=None, target_url=None, blackbox=None,
+               max_steps=300, max_returns=40):
+        return self.origin_tracer.trace(value, enter, trigger=trigger, target_url=target_url,
+                                        blackbox=blackbox, max_steps=max_steps, max_returns=max_returns)
+
     @property
     def captures(self):
         return self.tracer.captures
@@ -80,6 +87,7 @@ def attach(url="about:blank", headless=True, proxy=None, blackbox=None):
     for probe in (scripts, net, tracer):
         engine.add_probe(probe)
     oracle = Oracle(engine, tracer)
+    origin = OriginTracer(engine)
     engine.start(blackbox=blackbox)
     engine.navigate(url)
-    return Inspector(engine, scripts, net, tracer, oracle)
+    return Inspector(engine, scripts, net, tracer, oracle, origin)

@@ -99,6 +99,22 @@ def gw_objects(value: str = "", constructor: str = "", key: str = "", target_url
 
 
 @mcp.tool(description=(
+    "Origin trace: find the user-land function whose return first makes `value` appear in the "
+    "heap (where the value came from). Breaks on `enter` (a JS expression resolving to a function "
+    "on the path to the creation, e.g. an event handler), optionally provoked by the JS expression "
+    "`trigger` (e.g. \"document.querySelector('#go').click()\"), then steps with framework code "
+    "blackboxed, snapshotting at each user-land return. Returns the origin {function,url,line}, the "
+    "stepped trail, and whether the value pre-existed the trace. Comma-separated blackbox regexes "
+    "override the framework defaults."))
+def gw_origin(value: str, enter: str, trigger: str = "", target_url: str = "",
+              blackbox: str = "", max_steps: int = 300) -> str:
+    patterns = [p for p in blackbox.split(",") if p.strip()] if blackbox else None
+    result = gw().origin(value, enter, trigger=trigger or None, target_url=target_url or None,
+                         blackbox=patterns, max_steps=max_steps)
+    return json.dumps(result, indent=1, default=str)
+
+
+@mcp.tool(description=(
     "List parsed scripts across all targets, including eval/new Function/worker code. search "
     "filters by source substring; dynamic_only keeps runtime-generated code; full returns full source."))
 def gw_scripts(search: str = "", dynamic_only: bool = False, full: bool = False) -> str:
