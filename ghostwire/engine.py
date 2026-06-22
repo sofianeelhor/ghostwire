@@ -3,6 +3,13 @@ import re, sys, platform as _platform, threading
 from .browser import Browser
 
 
+def _normalize_url(url):
+    url = url.strip()
+    if "://" in url or url.split(":", 1)[0] in ("about", "data", "blob", "chrome", "file", "javascript"):
+        return url
+    return "https://" + url            # bare host like "nike.com" -> omnibox behaviour
+
+
 def _ua_metadata(user_agent, full_version):
     major = full_version.split(".")[0]
     name, arch = {"darwin": ("macOS", "arm64"), "win32": ("Windows", "x86")}.get(sys.platform, ("Linux", "x86"))
@@ -57,7 +64,7 @@ class Engine:
         return self
 
     def navigate(self, url):
-        self.cdp.send("Page.navigate", {"url": url}, session_id=self.page_session)
+        self.cdp.send("Page.navigate", {"url": _normalize_url(url)}, session_id=self.page_session)
         return self
 
     def _setup_stealth(self):

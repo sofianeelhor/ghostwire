@@ -88,6 +88,17 @@ def gw_verify(real_fn_expr: str, candidate: str, label: str = "", fresh_inputs: 
 
 
 @mcp.tool(description=(
+    "Find live objects in the heap by a value they hold, by constructor name, or by a property "
+    "key. Returns each match's constructor, the holding property, its heap id, and a short "
+    "retaining path to a GC root — i.e. where the value lives and what reaches it. Takes a fresh "
+    "snapshot of the page (or a worker/iframe via target_url) each call."))
+def gw_objects(value: str = "", constructor: str = "", key: str = "", target_url: str = "", limit: int = 20) -> str:
+    matches = gw().find_objects(value=value or None, constructor=constructor or None,
+                                key=key or None, target_url=target_url or None, limit=limit)
+    return json.dumps(matches, indent=1, default=str)
+
+
+@mcp.tool(description=(
     "List parsed scripts across all targets, including eval/new Function/worker code. search "
     "filters by source substring; dynamic_only keeps runtime-generated code; full returns full source."))
 def gw_scripts(search: str = "", dynamic_only: bool = False, full: bool = False) -> str:

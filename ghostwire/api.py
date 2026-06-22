@@ -3,6 +3,7 @@ import json, time
 from .engine import Engine
 from .tracer import Tracer
 from .oracle import Oracle
+from .heap import take_snapshot
 from .probes import ScriptWatcher, NetLog
 
 
@@ -39,6 +40,12 @@ class Inspector:
                target_url=None, sample=200, max_mismatches=5):
         return self.oracle.verify(fn_expr, candidate, label=label, fresh_inputs=fresh_inputs,
                                   target_url=target_url, sample=sample, max_mismatches=max_mismatches)
+
+    def snapshot(self, target_url=None):
+        return take_snapshot(self.engine, session_id=self.engine.resolve_session(target_url))
+
+    def find_objects(self, value=None, constructor=None, key=None, target_url=None, limit=50):
+        return self.snapshot(target_url).find_objects(value=value, constructor=constructor, key=key, limit=limit)
 
     @property
     def captures(self):

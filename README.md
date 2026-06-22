@@ -69,6 +69,7 @@ python3 examples/selftest.py             # invisible hook + live args, with an i
 python3 examples/capture_demo.py         # eval / new Function / POST body, all captured
 python3 examples/multitarget_demo.py     # worker auto-attach: source + network + in-worker hook
 python3 examples/oracle_demo.py          # gw_verify catches a reimpl that drops a +1
+python3 examples/heap_search.py          # find the live object holding a token, by value/constructor/key
 ```
 
 ## From Claude Code
@@ -78,15 +79,15 @@ pip install mcp
 claude mcp add ghostwire -- python3 -m ghostwire.mcp_server   # run from the repo checkout
 ```
 
-Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
+Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_objects`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
 
 
 ## Status
 
-Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, CLI, MCP server
+Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, heap snapshot + live-object search, CLI, MCP server
 
 Next: origin trace (where a value came from), followReturn dataflow (where it goes next),
-live-object search/patch, heap-diff, crypto-boundary logger, string-array/VM dumpers.
+live-object patch, heap-diff, crypto-boundary logger, string-array/VM dumpers.
 
 It is an arms race: CDP presence is itself detectable, so stealth is ongoing maintenance.
 ghostwire is a security-research instrument — for analysis on systems you are authorized to test, the same category as Frida and mitmproxy blablabla ect

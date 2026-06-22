@@ -53,6 +53,12 @@ class PipeConnection:
     def on(self, method, handler):
         self.handlers.setdefault(method, []).append(handler)
 
+    def off(self, method, handler):
+        try:
+            self.handlers.get(method, []).remove(handler)
+        except ValueError:
+            pass
+
     def send(self, method, params=None, session_id=None, wait=True, timeout=None):
         mid = next(self.next_id)
         msg = {"id": mid, "method": method, "params": params or {}}
