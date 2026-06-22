@@ -73,6 +73,10 @@ python3 examples/heap_search.py          # find the live object holding a token,
 python3 examples/origin_trace.py         # trace a token back to the exact function that builds it
 python3 examples/dataflow_follow.py      # follow a signer's output to the function that consumes it
 python3 examples/live_patch.py           # patch closure-held state found only via the heap, behaviour changes
+python3 examples/heap_diff.py            # snapshot before/after an action -> the decoded secret it allocated
+python3 examples/crypto_log.py           # recover the plaintext fed to crypto.subtle.* at the boundary
+python3 examples/deob_strings.py         # dump a rotated string table by driving the real decoder
+python3 examples/deob_vm.py              # trace a bytecode-VM dispatch loop into (pc, opcode, operand)
 ```
 
 ## From Claude Code
@@ -82,14 +86,14 @@ pip install mcp
 claude mcp add ghostwire -- python3 -m ghostwire.mcp_server   # run from the repo checkout
 ```
 
-Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_objects`, `gw_patch`, `gw_origin`, `gw_follow`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
+Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_objects`, `gw_patch`, `gw_origin`, `gw_follow`, `gw_heapdiff`, `gw_crypto`, `gw_strings`, `gw_vm`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
 
 
 ## Status
 
-Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, heap snapshot + live-object search + patch, origin trace (where a value came from), followReturn dataflow (where a value goes next), CLI, MCP server
+Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, heap snapshot + live-object search + patch, origin trace (where a value came from), followReturn dataflow (where a value goes next), heap-diff (what an action allocated), crypto-boundary logger, string-array + VM dumpers, CLI, MCP server
 
-Next: heap-diff (what an action allocated), crypto-boundary logger, string-array/VM dumpers.
+Next: anti-anti-debug hardening, and the Continental captcha end-to-end (re-derive the known answer key autonomously, gw_verify against the live target).
 
 It is an arms race: CDP presence is itself detectable, so stealth is ongoing maintenance.
 ghostwire is a security-research instrument — for analysis on systems you are authorized to test, the same category as Frida and mitmproxy blablabla ect

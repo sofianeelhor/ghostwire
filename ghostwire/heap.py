@@ -40,6 +40,49 @@ def take_snapshot(engine, session_id=None, numeric=True, timeout=60):
     return Snapshot(data)
 
 
+TYPED_ARRAYS = ("ArrayBuffer", "SharedArrayBuffer", "DataView", "Int8Array", "Uint8Array",
+                "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array",
+                "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array")
+
+
+def _has_user_retainer(snapshot, node):
+    # taking the second snapshot allocates V8-internal type-name strings with fresh ids; they
+    # are retained only by system/code nodes. a real value is retained by a JS object/closure.
+    for frm, edge_type, _ in snapshot.retainers(node):
+        if edge_type in ("property", "element") and snapshot.type(frm) in ("object", "closure"):
+            return True
+    return False
+
+
+def diff_snapshots(before, after, max_items=30):
+    # what `after` has that `before` did not — heap ids are stable, so a new id is a new object.
+    old_ids = {before.node_id(n) for n in range(before.node_count)}
+    strings, constructors, buffers = [], {}, []
+    for node in range(after.node_count):
+        if after.node_id(node) in old_ids:
+            continue
+        kind = after.type(node)
+        if kind in ("string", "concatenated string", "sliced string"):
+            value = after.resolve_string(node)
+            if value and len(value) > 3 and _has_user_retainer(after, node):
+                strings.append(value)
+        elif kind == "object":
+            name = after.name(node)
+            constructors[name] = constructors.get(name, 0) + 1
+            if name in TYPED_ARRAYS:
+                buffers.append({"type": name, "size": after.self_size(node)})
+    seen, unique = set(), []
+    for value in sorted(strings, key=len, reverse=True):
+        if value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return {"new_strings": unique[:max_items],
+            "new_objects_by_constructor": dict(sorted(constructors.items(), key=lambda kv: -kv[1])[:max_items]),
+            "new_buffers": sorted(buffers, key=lambda b: -b["size"])[:max_items],
+            "totals": {"distinct_strings": len(unique), "objects": sum(constructors.values()),
+                       "buffers": len(buffers)}}
+
+
 class Snapshot:
     def __init__(self, data):
         meta = data["snapshot"]["meta"]

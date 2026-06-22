@@ -6,16 +6,21 @@ from .oracle import Oracle
 from .origin import OriginTracer
 from .dataflow import DataflowTracer
 from .objects import LiveObjects
-from .heap import take_snapshot
+from .crypto import CryptoLogger
+from .deob import StringDumper, VMTracer
+from .heap import take_snapshot, diff_snapshots
 from .probes import ScriptWatcher, NetLog
 
 
 class Inspector:
-    def __init__(self, engine, scripts, net, tracer, oracle, origin, dataflow, objects):
+    def __init__(self, engine, scripts, net, tracer, oracle, origin, dataflow, objects, crypto):
         self.engine, self.scripts, self.net, self.tracer, self.oracle = engine, scripts, net, tracer, oracle
         self.origin_tracer = origin
         self.dataflow = dataflow
         self.objects = objects
+        self.crypto_logger = crypto
+        self.string_dumper = StringDumper(engine)
+        self.vm_tracer = VMTracer(engine)
 
     def targets(self):
         return self.engine.targets()
@@ -61,6 +66,26 @@ class Inspector:
     def read_object(self, node_id=None, value=None, constructor=None, key=None, target_url=None):
         return self.objects.read(node_id=node_id, value=value, constructor=constructor, key=key, target_url=target_url)
 
+    def heapdiff(self, trigger, target_url=None, wait_after=0.3):
+        sid = self.engine.resolve_session(target_url)
+        before = take_snapshot(self.engine, sid)
+        self.engine.send("Runtime.evaluate", {"expression": "/*gw*/" + trigger, "awaitPromise": True, "silent": True},
+                         session_id=sid)
+        if wait_after:
+            time.sleep(wait_after)
+        after = take_snapshot(self.engine, sid)
+        return diff_snapshots(before, after)
+
+    def crypto(self, duration=4.0, target_url=None):
+        return self.crypto_logger.capture(duration=duration, target_url=target_url)
+
+    def dump_strings(self, decoder, start=0, count=512, extra_args=None, target_url=None):
+        return self.string_dumper.dump(decoder, start=start, count=count, extra_args=extra_args, target_url=target_url)
+
+    def vm_watch(self, url_substr, line, column=0, watch=None, iterations=300, trigger=None, target_url=None):
+        return self.vm_tracer.watch(url_substr, line, column=column, watch=watch, iterations=iterations,
+                                    trigger=trigger, target_url=target_url)
+
     def origin(self, value, enter, trigger=None, target_url=None, blackbox=None,
                max_steps=300, max_returns=40):
         return self.origin_tracer.trace(value, enter, trigger=trigger, target_url=target_url,
@@ -105,6 +130,7 @@ def attach(url="about:blank", headless=True, proxy=None, blackbox=None):
     origin = OriginTracer(engine)
     dataflow = DataflowTracer(engine)
     objects = LiveObjects(engine)
+    crypto = CryptoLogger(engine)
     engine.start(blackbox=blackbox)
     engine.navigate(url)
-    return Inspector(engine, scripts, net, tracer, oracle, origin, dataflow, objects)
+    return Inspector(engine, scripts, net, tracer, oracle, origin, dataflow, objects, crypto)

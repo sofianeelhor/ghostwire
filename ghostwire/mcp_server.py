@@ -99,6 +99,56 @@ def gw_objects(value: str = "", constructor: str = "", key: str = "", target_url
 
 
 @mcp.tool(description=(
+    "String-array dumper: drive the obfuscator's own decoder over an index range instead of "
+    "reimplementing it. `decoder` is a JS expression resolving to the decode function; it is called "
+    "for index in [start, start+count) in the real page, returning {index: string}. Faithful to the "
+    "runtime-rotated array that static deob gets wrong. extra_args is a JSON array appended after the "
+    "index for decoders with a (index, key) signature. Stops after a run of out-of-range indices."))
+def gw_strings(decoder: str, start: int = 0, count: int = 256, extra_args: str = "", target_url: str = "") -> str:
+    try:
+        extra = json.loads(extra_args) if extra_args.strip() else None
+    except Exception as e:
+        return json.dumps({"error": f"extra_args must be a JSON array: {e}"})
+    return json.dumps(gw().dump_strings(decoder, start=start, count=count, extra_args=extra,
+                                        target_url=target_url or None), indent=1, default=str)
+
+
+@mcp.tool(description=(
+    "VM / loop tracer: break at a bytecode-VM dispatch loop (or any hot line) and log expressions on "
+    "every hit, emitting a (state) trace to lift. Locate the line with gw_scripts; pass its url "
+    "substring (urlRegex) and 1-based line. `watch` is a comma-separated list of expressions evaluated "
+    "in the paused frame each iteration (e.g. opcode,pc,acc). `trigger` optionally provokes the loop; "
+    "iterations caps the hits."))
+def gw_vm(url_substr: str, line: int, watch: str = "", column: int = 0, iterations: int = 300,
+          trigger: str = "", target_url: str = "") -> str:
+    exprs = [w.strip() for w in watch.split(",") if w.strip()]
+    result = gw().vm_watch(url_substr, line, column=column, watch=exprs, iterations=iterations,
+                           trigger=trigger or None, target_url=target_url or None)
+    return json.dumps(result, indent=1, default=str)
+
+
+@mcp.tool(description=(
+    "Crypto-boundary logger: for `seconds`, breakpoint-on-call the native crypto.subtle.* methods "
+    "(invisible) and record what crosses the boundary — at each call the caller-scope ArrayBuffers, "
+    "TypedArrays and strings are decoded (hex + utf8), surfacing the plaintext and key material being "
+    "fed to crypto, generically. Returns [{method, caller, inputs}]. v1 captures inputs (the resolved "
+    "output is an async Promise — correlate the ciphertext via gw_network or gw_follow)."))
+def gw_crypto(seconds: float = 4.0, target_url: str = "") -> str:
+    return json.dumps(gw().crypto(duration=seconds, target_url=target_url or None), indent=1, default=str)
+
+
+@mcp.tool(description=(
+    "Heap-diff around an action: snapshot the heap, run the JS expression `trigger`, snapshot again, "
+    "and report what it newly allocated — new strings (deduped, longest first: decoded plaintext, "
+    "tokens), new objects by constructor, and new typed arrays/ArrayBuffers with sizes. Answers "
+    "'what did executing this create?' without knowing where the result is stored. wait_ms lets "
+    "async work settle before the second snapshot."))
+def gw_heapdiff(trigger: str, target_url: str = "", wait_ms: int = 300) -> str:
+    result = gw().heapdiff(trigger, target_url=target_url or None, wait_after=wait_ms / 1000.0)
+    return json.dumps(result, indent=1, default=str)
+
+
+@mcp.tool(description=(
     "Patch a live object found via heap search — including closure-captured state that has no JS "
     "path from window (where gw_eval cannot reach). Identify the object the same way as gw_objects "
     "(value held / constructor / key) or by its heap node_id from gw_objects. set_props is a JSON "
