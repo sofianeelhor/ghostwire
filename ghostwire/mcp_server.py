@@ -99,6 +99,24 @@ def gw_objects(value: str = "", constructor: str = "", key: str = "", target_url
 
 
 @mcp.tool(description=(
+    "Patch a live object found via heap search — including closure-captured state that has no JS "
+    "path from window (where gw_eval cannot reach). Identify the object the same way as gw_objects "
+    "(value held / constructor / key) or by its heap node_id from gw_objects. set_props is a JSON "
+    "object of properties to assign (returns before/after for those keys); apply is a JS function "
+    "expression run with `this` bound to the object (toggle a flag, replace a callback, read state). "
+    "Use it to force state and see what breaks without touching the UI."))
+def gw_patch(value: str = "", constructor: str = "", key: str = "", node_id: int = 0,
+             set_props: str = "", apply: str = "", target_url: str = "") -> str:
+    try:
+        assign = json.loads(set_props) if set_props.strip() else None
+    except Exception as e:
+        return json.dumps({"error": f"set_props must be a JSON object: {e}"})
+    result = gw().patch(node_id=node_id or None, value=value or None, constructor=constructor or None,
+                        key=key or None, assign=assign, apply=apply or None, target_url=target_url or None)
+    return json.dumps(result, indent=1, default=str)
+
+
+@mcp.tool(description=(
     "Origin trace: find the user-land function whose return first makes `value` appear in the "
     "heap (where the value came from). Breaks on `enter` (a JS expression resolving to a function "
     "on the path to the creation, e.g. an event handler), optionally provoked by the JS expression "

@@ -5,15 +5,17 @@ from .tracer import Tracer
 from .oracle import Oracle
 from .origin import OriginTracer
 from .dataflow import DataflowTracer
+from .objects import LiveObjects
 from .heap import take_snapshot
 from .probes import ScriptWatcher, NetLog
 
 
 class Inspector:
-    def __init__(self, engine, scripts, net, tracer, oracle, origin, dataflow):
+    def __init__(self, engine, scripts, net, tracer, oracle, origin, dataflow, objects):
         self.engine, self.scripts, self.net, self.tracer, self.oracle = engine, scripts, net, tracer, oracle
         self.origin_tracer = origin
         self.dataflow = dataflow
+        self.objects = objects
 
     def targets(self):
         return self.engine.targets()
@@ -50,6 +52,14 @@ class Inspector:
 
     def find_objects(self, value=None, constructor=None, key=None, target_url=None, limit=50):
         return self.snapshot(target_url).find_objects(value=value, constructor=constructor, key=key, limit=limit)
+
+    def patch(self, node_id=None, value=None, constructor=None, key=None,
+              assign=None, apply=None, target_url=None):
+        return self.objects.patch(node_id=node_id, value=value, constructor=constructor, key=key,
+                                  assign=assign, apply=apply, target_url=target_url)
+
+    def read_object(self, node_id=None, value=None, constructor=None, key=None, target_url=None):
+        return self.objects.read(node_id=node_id, value=value, constructor=constructor, key=key, target_url=target_url)
 
     def origin(self, value, enter, trigger=None, target_url=None, blackbox=None,
                max_steps=300, max_returns=40):
@@ -94,6 +104,7 @@ def attach(url="about:blank", headless=True, proxy=None, blackbox=None):
     oracle = Oracle(engine, tracer)
     origin = OriginTracer(engine)
     dataflow = DataflowTracer(engine)
+    objects = LiveObjects(engine)
     engine.start(blackbox=blackbox)
     engine.navigate(url)
-    return Inspector(engine, scripts, net, tracer, oracle, origin, dataflow)
+    return Inspector(engine, scripts, net, tracer, oracle, origin, dataflow, objects)
