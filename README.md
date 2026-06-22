@@ -71,6 +71,7 @@ python3 examples/multitarget_demo.py     # worker auto-attach: source + network 
 python3 examples/oracle_demo.py          # gw_verify catches a reimpl that drops a +1
 python3 examples/heap_search.py          # find the live object holding a token, by value/constructor/key
 python3 examples/origin_trace.py         # trace a token back to the exact function that builds it
+python3 examples/dataflow_follow.py      # follow a signer's output to the function that consumes it
 ```
 
 ## From Claude Code
@@ -80,15 +81,14 @@ pip install mcp
 claude mcp add ghostwire -- python3 -m ghostwire.mcp_server   # run from the repo checkout
 ```
 
-Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_objects`, `gw_origin`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
+Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_objects`, `gw_origin`, `gw_follow`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
 
 
 ## Status
 
-Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, heap snapshot + live-object search, origin trace (where a value came from), CLI, MCP server
+Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, heap snapshot + live-object search, origin trace (where a value came from), followReturn dataflow (where a value goes next), CLI, MCP server
 
-Next: followReturn dataflow (where a value goes next), live-object patch, heap-diff,
-crypto-boundary logger, string-array/VM dumpers.
+Next: live-object patch, heap-diff, crypto-boundary logger, string-array/VM dumpers.
 
 It is an arms race: CDP presence is itself detectable, so stealth is ongoing maintenance.
 ghostwire is a security-research instrument — for analysis on systems you are authorized to test, the same category as Frida and mitmproxy blablabla ect

@@ -115,6 +115,18 @@ def gw_origin(value: str, enter: str, trigger: str = "", target_url: str = "",
 
 
 @mcp.tool(description=(
+    "Dataflow / followReturn: follow a producer function's return value into its consumer's frame "
+    "(where it goes next). Breaks on `producer` (a JS expression resolving to a function), "
+    "optionally provoked by `trigger`, captures what it returns, steps out, and reports the consumer "
+    "{function,url,line,variable} that now holds the value — a live variable you can then read or "
+    "patch. A Promise return is reported as async (the resolved consumer is the await continuation)."))
+def gw_follow(producer: str, trigger: str = "", target_url: str = "", blackbox: str = "") -> str:
+    patterns = [p for p in blackbox.split(",") if p.strip()] if blackbox else None
+    result = gw().follow(producer, trigger=trigger or None, target_url=target_url or None, blackbox=patterns)
+    return json.dumps(result, indent=1, default=str)
+
+
+@mcp.tool(description=(
     "List parsed scripts across all targets, including eval/new Function/worker code. search "
     "filters by source substring; dynamic_only keeps runtime-generated code; full returns full source."))
 def gw_scripts(search: str = "", dynamic_only: bool = False, full: bool = False) -> str:
