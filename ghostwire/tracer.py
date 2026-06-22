@@ -15,6 +15,7 @@ class Tracer:
         self.captures = []          # arg-only records
         self.pairs = {}             # label -> [{input, output, output_type}]
         self.lock = threading.Lock()
+        self.verbose = False        # print each hooked call as it fires
         self.engine = None
         self.hooks = []
         self.ret_bps = {}           # return-location breakpointId -> label
@@ -110,6 +111,8 @@ class Tracer:
             rec["output"], rec["unserialized"] = None, rv.get("description") or rv.get("subtype") or rv.get("type")
         with self.lock:
             self.pairs.setdefault(label, []).append(rec)
+        if self.verbose:
+            print(f"[pair] {label}({rec['input']}) -> {rec['output']!r}")
 
     def _args(self, frames, sid):
         frame = frames[0]
@@ -123,6 +126,8 @@ class Tracer:
         rec["stack"] = [f.get("functionName") or "<anon>" for f in frames[:5]]
         with self.lock:
             self.captures.append(rec)
+        if self.verbose:
+            print(f"[hook] {rec['fn']}({rec['args']})")
 
     def _resume(self, sid):
         try:

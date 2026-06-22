@@ -6,5 +6,6 @@ __pycache__/
 *.trace.json
 examples/*.trace.json
 .playwright-mcp/
+.DS_Store
 skill/
 .venv/

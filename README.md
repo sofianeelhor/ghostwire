@@ -3,7 +3,6 @@
 Stealth runtime instrumentation for reverse-engineering very hostile client-side JavaScript anti-bot, captcha, fingerprinting, fraud and payment SDKs. It hooks functions, follows the whole target graph (page, workers, iframes), and observes resolved runtime values, without injecting anything into the page. It is built to be driven by an agent, and its one job is to tell that agent when the agent is wrong.
 
 ![ghostwire CLI](docs/screenshots/cli.png)
-<!-- screenshot: a `python3 -m ghostwire <url>` run showing targets / scripts / captures -->
 
 ## The idea
 
@@ -23,7 +22,6 @@ with ghostwire.attach("https://target/") as gw:
 ```
 
 ![gw_verify catching a wrong reimplementation](docs/screenshots/verify.png)
-<!-- screenshot: gw_verify output with verified=false and a counterexample -->
 
 ## Why CDP over a pipe, not in-page injection
 
@@ -50,7 +48,6 @@ python3 -m ghostwire https://target/ --hook 'window.fn' --hook 'enc@@worker.js' 
 `obfuscator.io` rotates its string array at load, so the array order in the source is a lie. A static reader, or a model like opus 6.8 copying the source array, reimplements the decoder against the wrong order and is silently wrong. ghostwire drives the page's own decoder over the full index range to get the real mapping, and the oracle catches the wrong reimplementation:
 
 ```
-// example
 ground truth (runtime, rotated):  0=craig 1=patched 2=osint 3=guest 4=admin ...
 static view  (source order):      0=guest 1=admin   2=token 3=secret 4=login ...
 static order matches runtime for 0/10 indices
@@ -60,9 +57,7 @@ naive static reimpl    -> verified=False (matched 0/10)
 runtime-derived reimpl -> verified=True  (matched 10/10)
 ```
 
-![runtime order vs source order](docs/screenshots/obfuscated.png)
-<!-- screenshot: examples/obfuscated_strings.py output -->
-
+### Examples
 ```bash
 python3 examples/obfuscated_strings.py   # the case above, end to end
 python3 examples/selftest.py             # invisible hook + live args, with an invisibility proof
@@ -78,6 +73,9 @@ python3 examples/crypto_log.py           # recover the plaintext fed to crypto.s
 python3 examples/deob_strings.py         # dump a rotated string table by driving the real decoder
 python3 examples/deob_vm.py              # trace a bytecode-VM dispatch loop into (pc, opcode, operand)
 ```
+
+![heapsearch](docs/screenshots/heap.png)
+
 
 ## From Claude Code
 
