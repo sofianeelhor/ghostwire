@@ -48,17 +48,74 @@ def gw_eval(expression: str, target_url: str = "") -> str:
 
 
 @mcp.tool()
-def gw_hook(expression: str, target_url: str = "") -> str:
+def gw_hook(expression: str, target_url: str = "", capture_returns: bool = False,
+            label: str = "") -> str:
     """Set an invisible breakpoint-on-call hook on the function expression resolves to,
-    in the root page or in the worker/iframe whose url contains target_url."""
-    _gw().hook(expression, target_url=target_url or None)
-    return f"hooked {expression} in {target_url or 'root'}"
+    in the root page or in the worker/iframe whose url contains target_url. With
+    capture_returns=True, also capture (input -> output) pairs into a ground-truth corpus
+    (under `label`, default = expression) that gw_verify checks candidate code against —
+    this is how you build the corpus for the verification oracle."""
+    _gw().hook(expression, target_url=target_url or None,
+               capture_returns=capture_returns, label=label or None)
+    mode = "input->output pairs" if capture_returns else "args only"
+    return f"hooked {expression} in {target_url or 'root'} ({mode})"
 
 
 @mcp.tool()
 def gw_captures(limit: int = 50) -> str:
     """Recent hooked-call captures: [{session, fn, args, stack}]."""
     return json.dumps(_gw().captures[-limit:], indent=1)
+
+
+@mcp.tool()
+def gw_corpus(label: str = "", limit: int = 20, full: bool = False) -> str:
+    """Inspect the ground-truth (input -> output) corpus captured by capture_returns hooks.
+    With no label, returns {label: pair_count} for every captured boundary. With a label,
+    returns the captured pairs (slim: inputs/outputs truncated unless full=True). This is
+    the ground truth gw_verify checks against; it is also saved by gw_save for offline
+    re-verification."""
+    gw = _gw()
+    if not label:
+        return json.dumps(gw.corpora(), indent=1)
+    pairs = gw.corpus(label)[-limit:]
+    if not full:
+        def trim(v):
+            s = json.dumps(v, default=str)
+            return v if len(s) <= 200 else (s[:200] + "…")
+        pairs = [{"input": trim(p.get("input")), "output": trim(p.get("output")),
+                  "output_type": p.get("output_type"),
+                  **({"unserialized": p["unserialized"]} if p.get("unserialized") else {})}
+                 for p in pairs]
+    return json.dumps({"label": label, "shown": len(pairs), "total": len(gw.corpus(label)),
+                       "pairs": pairs}, indent=1, default=str)
+
+
+@mcp.tool()
+def gw_verify(real_fn_expr: str, candidate: str, label: str = "", fresh_inputs: str = "",
+              target_url: str = "", sample: int = 200, max_mismatches: int = 5) -> str:
+    """THE GATE. Check an agent's candidate reimplementation against ground truth before
+    trusting it (charter §2 — nothing inferred is trusted until verified here).
+
+    real_fn_expr : a JS expression resolving to the REAL function on the target (e.g.
+                   "window.sign"); used to generate fresh ground truth for fresh_inputs.
+    candidate    : a JS expression evaluating to a function — your reimplementation. It is
+                   run in an ISOLATED page (cannot see or call the real function).
+    label        : corpus label to test against (observed pairs from a capture_returns hook).
+    fresh_inputs : JSON array of inputs to additionally test; each input is an argument
+                   list, e.g. '[["craig",5],["dave",9]]'. The real function is invoked live
+                   to get their true outputs. Use this to probe inputs the corpus never hit.
+    target_url   : restrict the live real-function query to a worker/iframe by url substring.
+
+    Returns {verified, tested, matched, mismatches:[{input,expected,got,source}],
+    coverage_notes}. verified is True only if >=1 input was tested and every verifiable
+    input matched. Iterate on `candidate` until mismatches is empty."""
+    try:
+        fresh = json.loads(fresh_inputs) if fresh_inputs.strip() else None
+    except Exception as e:
+        return json.dumps({"error": f"fresh_inputs must be a JSON array: {e}"})
+    res = _gw().verify(real_fn_expr, candidate, label=label or None, fresh_inputs=fresh,
+                       target_url=target_url or None, sample=sample, max_mismatches=max_mismatches)
+    return json.dumps(res, indent=1, default=str)
 
 
 @mcp.tool()

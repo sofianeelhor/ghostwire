@@ -1,2 +1,4 @@
-websocket-client>=1.8
+# The core has no third-party dependencies — clone the repo and run `python3 -m ghostwire`.
+# The MCP server is the only part that needs a package; install it only if you use the server:
+#   pip install mcp
 mcp>=1.0

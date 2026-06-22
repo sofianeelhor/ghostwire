@@ -1,98 +1,129 @@
-"""
-engine.py — one connection, every target.
+import threading
 
-Connects to the root page and uses Target.setAutoAttach(flatten) to follow the whole
-target graph: dedicated/shared workers, service workers, and out-of-process iframes.
-Each child target gets its own CDP session id; the engine enables the probe domains on
-every session and routes events to probes tagged with the session they came from.
-
-This is what makes ghostwire work on real targets, where the interesting code (crypto,
-anti-bot engines) runs inside an iframe + worker rather than the top page.
-"""
 from .browser import Browser
 
 
 class Engine:
     def __init__(self, browser=None, headless=True, proxy=None):
         self.browser = browser or Browser(headless=headless, proxy=proxy)
-        self.cdp = self.browser.new_page()
-        self.sessions = {}          # session_id -> targetInfo  (root is None -> {"type":"page"})
+        self.cdp = self.browser.cdp
+        self.sessions = {}
+        self.page_session = None
         self.blackbox = None
-        self._probes = []
-        self.cdp.on("Target.attachedToTarget", self._on_attached)
-        self.cdp.on("Target.detachedFromTarget", self._on_detached)
+        self.probes = []
+        self.lock = threading.Lock()
+        self.private = set()                 # target ids kept out of the probes
+        self.page_target = None
+        self.page_attached = threading.Event()
+        self.cdp.on("Target.attachedToTarget", self._attached)
+        self.cdp.on("Target.detachedFromTarget", self._detached)
+        self.cdp.on("Target.targetInfoChanged", self._info_changed)
 
-    # ---- probes ----
     def add_probe(self, probe):
         probe.attach(self)
-        self._probes.append(probe)
+        self.probes.append(probe)
         return probe
 
     def on(self, method, handler):
         self.cdp.on(method, handler)
 
     def send(self, method, params=None, session_id=None):
-        return self.cdp.send(method, params, session_id=session_id)
+        return self.cdp.send(method, params, session_id=session_id if session_id is not None else self.page_session)
 
-    # ---- lifecycle ----
     def start(self, blackbox=None):
         self.blackbox = blackbox
-        self.sessions[None] = {"type": "page", "url": ""}
-        self._enable_session(None, is_page=True)
+        self.page_target = self.cdp.send("Target.createTarget", {"url": "about:blank"})["targetId"]
+        self.cdp.send("Target.attachToTarget", {"targetId": self.page_target, "flatten": True})
+        if not self.page_attached.wait(timeout=10):
+            raise RuntimeError("page target never attached")
         return self
 
     def navigate(self, url):
-        self.cdp.send("Page.navigate", {"url": url})
+        self.cdp.send("Page.navigate", {"url": url}, session_id=self.page_session)
         return self
 
-    def _enable_session(self, sid, is_page=False):
-        def send(method, params=None):
+    def _enable(self, sid, is_page):
+        def enable(method, params=None):
             try:
                 return self.cdp.send(method, params, session_id=sid)
             except Exception:
                 return None
-        for dom in ("Runtime", "Debugger", "Network"):
-            send(dom + ".enable")
+        for domain in ("Runtime", "Debugger", "Network"):
+            enable(domain + ".enable")
         if is_page:
-            send("Page.enable")
+            enable("Page.enable")
         if self.blackbox:
-            send("Debugger.setBlackboxPatterns", {"patterns": self.blackbox})
-        # follow grandchildren too (workers inside iframes, etc.)
-        send("Target.setAutoAttach",
-             {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})
+            enable("Debugger.setBlackboxPatterns", {"patterns": self.blackbox})
+        enable("Target.setAutoAttach",
+               {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})
 
-    def _on_attached(self, params, session_id=None):
+    def _attached(self, params, session_id=None):
         sid = params["sessionId"]
         info = params.get("targetInfo", {})
-        self.sessions[sid] = info
-        is_page = info.get("type") in ("page", "iframe")
-        self._enable_session(sid, is_page=is_page)
-        # child started paused (waitForDebuggerOnStart); let it run now that probes are live
+        with self.lock:
+            if sid in self.sessions:
+                return
+            self.sessions[sid] = info
+            private = info.get("targetId") in self.private
+        if private:
+            self.cdp.send("Runtime.enable", session_id=sid)
+            return
+        self._enable(sid, info.get("type") in ("page", "iframe"))
+        if info.get("targetId") == self.page_target:
+            self.page_session = sid
+            self.page_attached.set()
         try:
-            self.cdp.send("Runtime.runIfWaitingForDebugger", session_id=sid)
+            self.cdp.send("Runtime.runIfWaitingForDebugger", session_id=sid)  # release waitForDebuggerOnStart
         except Exception:
             pass
 
-    def _on_detached(self, params, session_id=None):
-        self.sessions.pop(params.get("sessionId"), None)
+    def _detached(self, params, session_id=None):
+        with self.lock:
+            self.sessions.pop(params.get("sessionId"), None)
 
-    # ---- helpers ----
+    def _info_changed(self, params, session_id=None):
+        info = params.get("targetInfo", {})
+        with self.lock:
+            for sid, existing in self.sessions.items():
+                if existing.get("targetId") == info.get("targetId"):
+                    self.sessions[sid] = info
+                    break
+
+    def resolve_session(self, url_substr=None):
+        if not url_substr:
+            return self.page_session
+        with self.lock:
+            for sid, info in self.sessions.items():
+                if sid != self.page_session and url_substr in (info.get("url") or ""):
+                    return sid
+        raise RuntimeError(f"no target url contains {url_substr!r}")
+
     def targets(self):
-        """[(session_id, type, url)] for every attached target."""
-        return [(sid, i.get("type"), i.get("url", "")) for sid, i in self.sessions.items()]
+        with self.lock:
+            return [(sid, info.get("type"), info.get("url", ""))
+                    for sid, info in self.sessions.items() if info.get("targetId") not in self.private]
 
-    def session_for(self, url_substr):
-        """Find the session id of the target whose url contains url_substr (None = root)."""
-        for sid, info in self.sessions.items():
-            if sid is not None and url_substr in (info.get("url") or ""):
-                return sid
-        return None
+    def open_isolated_page(self):
+        target = self.cdp.send("Target.createTarget", {"url": "about:blank"})["targetId"]
+        with self.lock:
+            self.private.add(target)
+        sid = self.cdp.send("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
+        try:
+            self.cdp.send("Runtime.enable", session_id=sid)
+        except Exception:
+            pass
+        return sid
+
+    def close_target(self, sid):
+        with self.lock:
+            target = self.sessions.get(sid, {}).get("targetId")
+        if target:
+            try:
+                self.cdp.send("Target.closeTarget", {"targetId": target})
+            except Exception:
+                pass
 
     def close(self):
-        try:
-            self.cdp.close()
-        except Exception:
-            pass
         try:
             self.browser.close()
         except Exception:

@@ -1,107 +1,94 @@
-"""
-browser.py — launch (or attach to) Chrome with a remote-debugging endpoint and
-hand back a CDP client bound to a fresh page target.
+import os, sys, shutil, tempfile, subprocess
 
-Stealth-minded launch flags; a real Chrome binary is preferred over bundled Chromium.
-"""
-import os
-import json
-import time
-import socket
-import shutil
-import tempfile
-import subprocess
-import urllib.request
+from .cdp import PipeConnection
 
-from .cdp import CDP
+ENV_OVERRIDES = ("GHOSTWIRE_CHROME", "CHROME_PATH", "CHROME_BIN")
 
-CHROME_CANDIDATES = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-]
+LOCATIONS = {
+    "darwin": [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+        "/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ],
+    "linux": [
+        "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome-beta", "/usr/bin/google-chrome-unstable",
+        "/opt/google/chrome/chrome", "/usr/bin/chromium",
+        "/usr/bin/chromium-browser", "/snap/bin/chromium",
+    ],
+    "win32": [
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Chromium\Application\chrome.exe"),
+    ],
+}
+
+PATH_NAMES = ("google-chrome", "google-chrome-stable", "google-chrome-beta",
+              "chromium", "chromium-browser", "chrome")
 
 
 def find_chrome():
-    for p in CHROME_CANDIDATES:
-        if os.path.exists(p):
+    for var in ENV_OVERRIDES:
+        if (p := os.environ.get(var)) and os.path.exists(p):
             return p
-    raise RuntimeError("no Chrome/Chromium binary found")
+    for p in LOCATIONS.get(sys.platform, []):
+        if p and os.path.exists(p):
+            return p
+    for name in PATH_NAMES:
+        if (p := shutil.which(name)):
+            return p
+    raise RuntimeError("no Chrome found; set GHOSTWIRE_CHROME or install Google Chrome")
 
 
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# few non-default switches → less to fingerprint. site isolation left ON so cross-origin
+# iframes (captcha/anti-bot engines) stay separate targets and auto-attach.
+FLAGS = ("--remote-debugging-pipe=JSON", "--no-first-run", "--no-default-browser-check",
+         "--disable-blink-features=AutomationControlled", "--disable-features=Translate")
 
 
 class Browser:
-    def __init__(self, headless=True, chrome=None, proxy=None, port=None,
-                 extra_args=None):
-        self.chrome = chrome or find_chrome()
-        self.port = port or _free_port()
-        self.userdir = tempfile.mkdtemp(prefix="ghostwire-")
-        args = [
-            self.chrome,
-            f"--remote-debugging-port={self.port}",
-            "--remote-allow-origins=*",
-            f"--user-data-dir={self.userdir}",
-            "--no-first-run", "--no-default-browser-check",
-            "--disable-blink-features=AutomationControlled",
-            # NOTE: do not disable site-per-process; OOPIFs must stay separate targets
-            # so cross-origin iframes (where engines like captchas run) auto-attach.
-            "--disable-features=Translate",
-        ]
+    def __init__(self, headless=True, executable=None, proxy=None, extra_flags=None):
+        self.executable = executable or find_chrome()
+        self.user_data_dir = tempfile.mkdtemp(prefix="ghostwire-")
+
+        # Chrome reads commands from fd 3, writes events to fd 4
+        chrome_in, parent_out = os.pipe()
+        parent_in, chrome_out = os.pipe()
+        for fd in (chrome_in, parent_out, parent_in, chrome_out):
+            os.set_inheritable(fd, True)
+
+        flags = [self.executable, *FLAGS, f"--user-data-dir={self.user_data_dir}"]
         if headless:
-            args.append("--headless=new")
+            flags.append("--headless=new")
         if proxy:
-            args.append(f"--proxy-server={proxy}")
-        if extra_args:
-            args += extra_args
-        self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self._wait_ready()
+            flags.append(f"--proxy-server={proxy}")
+        if extra_flags:
+            flags.extend(extra_flags)
 
-    def _http_json(self, path):
-        url = f"http://127.0.0.1:{self.port}{path}"
-        with urllib.request.urlopen(url, timeout=5) as r:
-            return json.loads(r.read().decode())
+        def place_fds():
+            os.dup2(chrome_in, 3); os.dup2(chrome_out, 4)
+            os.set_inheritable(3, True); os.set_inheritable(4, True)
 
-    def _wait_ready(self, timeout=15):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                self._http_json("/json/version")
-                return
-            except Exception:
-                time.sleep(0.2)
-        raise RuntimeError("Chrome did not expose a debugging endpoint in time")
-
-    def new_page(self, url="about:blank") -> CDP:
-        """Create a fresh page target and return a CDP client wired directly to it."""
-        ver = self._http_json("/json/version")
-        bcdp = CDP(ver["webSocketDebuggerUrl"])
-        try:
-            target_id = bcdp.send("Target.createTarget", {"url": url})["targetId"]
-        finally:
-            bcdp.close()
-        for _ in range(50):
-            for t in self._http_json("/json/list"):
-                if t.get("id") == target_id and t.get("webSocketDebuggerUrl"):
-                    return CDP(t["webSocketDebuggerUrl"])
-            time.sleep(0.1)
-        raise RuntimeError("created target never exposed a websocket url")
+        self.process = subprocess.Popen(
+            flags, pass_fds=(chrome_in, chrome_out, 3, 4), preexec_fn=place_fds,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.close(chrome_in); os.close(chrome_out)
+        self.cdp = PipeConnection(parent_out, parent_in)
 
     def close(self):
         try:
-            self.proc.terminate()
-            self.proc.wait(timeout=5)
+            self.cdp.close()
+        except Exception:
+            pass
+        try:
+            self.process.terminate()
+            self.process.wait(timeout=5)
         except Exception:
             try:
-                self.proc.kill()
+                self.process.kill()
             except Exception:
                 pass
-        shutil.rmtree(self.userdir, ignore_errors=True)
+        shutil.rmtree(self.user_data_dir, ignore_errors=True)

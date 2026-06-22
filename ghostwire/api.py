@@ -14,17 +14,19 @@ import time
 
 from .engine import Engine
 from .tracer import Tracer
+from .oracle import Oracle
 from .probes import ScriptWatcher, NetLog
 
 
 class Inspector:
     """Bundles an Engine with the standard probes and exposes a small reuse API."""
 
-    def __init__(self, engine, scripts, net, tracer):
+    def __init__(self, engine, scripts, net, tracer, oracle):
         self.engine = engine
         self.scripts = scripts
         self.net = net
         self.tracer = tracer
+        self.oracle = oracle
 
     def targets(self):
         return self.engine.targets()
@@ -37,12 +39,29 @@ class Inspector:
         time.sleep(seconds)
         return self
 
-    def hook(self, expression, target_url=None):
-        self.tracer.hook(expression, target_url=target_url)
+    def hook(self, expression, target_url=None, capture_returns=False, label=None):
+        self.tracer.hook(expression, target_url=target_url,
+                         capture_returns=capture_returns, label=label)
         return self
 
+    # ---- verification oracle (charter §2) ----
+    def corpus(self, label):
+        """Observed (input, output) ground-truth pairs for a hooked boundary."""
+        return self.oracle.corpus(label)
+
+    def corpora(self):
+        """{label: pair_count} across all capture_returns hooks."""
+        return self.oracle.corpora()
+
+    def verify(self, fn_expr, candidate, label=None, fresh_inputs=None,
+               target_url=None, sample=200, max_mismatches=5):
+        """Check an agent's candidate reimplementation against ground truth (corpus +
+        live target). Returns {verified, tested, matched, mismatches, coverage_notes}."""
+        return self.oracle.verify(fn_expr, candidate, label=label, fresh_inputs=fresh_inputs,
+                                  target_url=target_url, sample=sample, max_mismatches=max_mismatches)
+
     def eval(self, expression, target_url=None):
-        sid = self.engine.session_for(target_url) if target_url else None
+        sid = self.engine.resolve_session(target_url)
         # sentinel prefix so our own eval is filtered out of the captured scripts
         r = self.engine.send("Runtime.evaluate",
                              {"expression": "/*gw*/" + expression, "returnByValue": True, "silent": True},
@@ -59,6 +78,7 @@ class Inspector:
             "scripts": self.scripts.scripts,
             "network": self.net.all(),
             "captures": self.tracer.captures,
+            "corpus": self.tracer.pairs,   # replayable ground-truth pairs, per boundary
         }
 
     def save(self, path):
@@ -67,6 +87,10 @@ class Inspector:
         return path
 
     def close(self):
+        try:
+            self.oracle.close()
+        except Exception:
+            pass
         self.engine.close()
 
     def __enter__(self):
@@ -84,6 +108,7 @@ def attach(url="about:blank", headless=True, proxy=None, blackbox=None):
     scripts, net, tracer = ScriptWatcher(), NetLog(), Tracer()
     for p in (scripts, net, tracer):
         engine.add_probe(p)
+    oracle = Oracle(engine, tracer)
     engine.start(blackbox=blackbox)
     engine.navigate(url)
-    return Inspector(engine, scripts, net, tracer)
+    return Inspector(engine, scripts, net, tracer, oracle)

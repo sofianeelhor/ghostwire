@@ -9,10 +9,13 @@ description = "Stealth runtime instrumentation for web reverse engineering, over
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
-dependencies = [
-    "websocket-client>=1.8",
-    "mcp>=1.0",
-]
+# The core (transport, engine, tracer, oracle, probes, CLI) has no third-party dependencies:
+# CDP runs over an OS pipe, so there is nothing to install to clone-and-run. Only the MCP
+# server needs a package, and it is an optional extra.
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
 
 [project.scripts]
 ghostwire-mcp = "ghostwire.mcp_server:main"
