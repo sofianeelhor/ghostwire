@@ -87,6 +87,17 @@ claude mcp add ghostwire -- python3 -m ghostwire.mcp_server   # run from the rep
 Tools: `gw_attach`, `gw_targets`, `gw_hook`, `gw_captures`, `gw_corpus`, `gw_verify`, `gw_objects`, `gw_patch`, `gw_origin`, `gw_follow`, `gw_heapdiff`, `gw_crypto`, `gw_strings`, `gw_vm`, `gw_scripts`, `gw_network`, `gw_eval`, `gw_navigate`, `gw_save`, `gw_close`. The `skills/verify-reimplementation/` Agent Skill teaches the hypothesize -> capture -> verify loop. Every capture, corpus and trace is savable to a JSON artifact that reloads and re-verifies offline.
 
 
+## Special thanks
+
+
+ghostwire stands on a body of existing work so thanks to them
+
+- **[Wirebrowser](https://github.com/fcavallarin/wirebrowser)** (fcavallarin) — the reference implementation of the CDP runtime techniques:  hooks via breakpoints on the live function object, [BDHS/Origin-Trace](https://fcavallarin.github.io/wirebrowser/BDHS-Origin-Trace), [`followReturn` async dataflow](https://fcavallarin.github.io/wirebrowser/CDP-as-a-Runtime-Instrumentation-Engine), live-object search + patch, structural-similarity heap search. ghostwire reimplements these agent-first rather than as a desktop GUI.
+- **[CASCADE](https://arxiv.org/abs/2507.17691)** (Jiang et al., Google) — the detect-then-execute-then-transform pattern, and the insight that an obfuscator's decoder is pure and should be *run*, not reimplemented. ghostwire runs it in the real page instead of a sandbox.
+- **[JsDeObsBench](https://github.com/Ch3nYe/JsDeObsBench)** (Chen et al., CCS'25, [paper](https://arxiv.org/abs/2506.20170)) — the ~97% syntactic / ~61% semantic finding that motivates the oracle, plus an execution-verifiable dataset.
+- **[Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)**, and the broader CDP-MCP ecosystem (e.g. Google's [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp)) for tool-surface ergonomics.
+ 
+
 ## Status
 
 Done: pipe transport, whole-graph auto-attach, semi-invisible tracer, script + network probes, the verification oracle, heap snapshot + live-object search + patch, origin trace (where a value came from), followReturn dataflow (where a value goes next), heap-diff (what an action allocated), crypto-boundary logger, string-array + VM dumpers, CLI, MCP server
