@@ -83,6 +83,9 @@ class Browser:
                 self.process.kill()
             except Exception:
                 pass
+        closer = getattr(self.process, "close", None)   # _WinProcess frees its process handle; Popen has none
+        if closer:
+            closer()
         shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
 
@@ -153,7 +156,10 @@ def _spawn_windows(flags):
         None, ctypes.create_unicode_buffer(subprocess.list2cmdline(flags)), None, None,
         True, CREATE_NO_WINDOW, None, None, ctypes.byref(si), ctypes.byref(pi))
     if not ok:
-        raise ctypes.WinError()
+        err = ctypes.WinError()                 # capture before CloseHandle clobbers GetLastError
+        for handle in (cmd_r, cmd_w, evt_r, evt_w):
+            _winapi.CloseHandle(handle)
+        raise err
 
     kernel32.CloseHandle(pi.hThread)
     _winapi.CloseHandle(cmd_r); _winapi.CloseHandle(evt_w)   # the child owns these now
@@ -177,3 +183,15 @@ class _WinProcess:
         import ctypes
         ms = 0xFFFFFFFF if timeout is None else int(timeout * 1000)
         ctypes.windll.kernel32.WaitForSingleObject(self._handle, ms)
+
+    def close(self):
+        import ctypes
+        handle, self._handle = self._handle, None   # idempotent: only the first close frees it
+        if handle is not None:
+            ctypes.windll.kernel32.CloseHandle(handle)
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
