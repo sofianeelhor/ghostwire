@@ -150,7 +150,11 @@ def _spawn_windows(flags):
     pi = PROCESS_INFORMATION()
 
     CREATE_NO_WINDOW = 0x08000000
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = _kernel32()
+    kernel32.CreateProcessW.argtypes = [
+        wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p,
+        wintypes.BOOL, wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR,
+        ctypes.POINTER(STARTUPINFOW), ctypes.POINTER(PROCESS_INFORMATION)]
     kernel32.CreateProcessW.restype = wintypes.BOOL
     ok = kernel32.CreateProcessW(
         None, ctypes.create_unicode_buffer(subprocess.list2cmdline(flags)), None, None,
@@ -174,24 +178,34 @@ class _WinProcess:
         self._handle, self.pid = handle, pid
 
     def terminate(self):
-        import ctypes
-        ctypes.windll.kernel32.TerminateProcess(self._handle, 1)
+        _kernel32().TerminateProcess(self._handle, 1)
 
     kill = terminate
 
     def wait(self, timeout=None):
-        import ctypes
         ms = 0xFFFFFFFF if timeout is None else int(timeout * 1000)
-        ctypes.windll.kernel32.WaitForSingleObject(self._handle, ms)
+        _kernel32().WaitForSingleObject(self._handle, ms)
 
     def close(self):
-        import ctypes
         handle, self._handle = self._handle, None   # idempotent: only the first close frees it
         if handle is not None:
-            ctypes.windll.kernel32.CloseHandle(handle)
+            _kernel32().CloseHandle(handle)
 
     def __del__(self):
         try:
             self.close()
         except Exception:
             pass
+
+
+# kernel32 with explicit argtypes (typed once) so handle/pointer args don't truncate on win64.
+def _kernel32():
+    import ctypes
+    from ctypes import wintypes
+    k = ctypes.windll.kernel32
+    if not getattr(k, "_gw_typed", False):
+        k.CloseHandle.argtypes = (wintypes.HANDLE,); k.CloseHandle.restype = wintypes.BOOL
+        k.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT); k.TerminateProcess.restype = wintypes.BOOL
+        k.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD); k.WaitForSingleObject.restype = wintypes.DWORD
+        k._gw_typed = True
+    return k
