@@ -58,12 +58,6 @@ class Browser:
         self.executable = executable or find_chrome()
         self.user_data_dir = tempfile.mkdtemp(prefix="ghostwire-")
 
-        # Chrome reads commands from fd 3, writes events to fd 4
-        chrome_in, parent_out = os.pipe()
-        parent_in, chrome_out = os.pipe()
-        for fd in (chrome_in, parent_out, parent_in, chrome_out):
-            os.set_inheritable(fd, True)
-
         flags = [self.executable, *FLAGS, f"--user-data-dir={self.user_data_dir}"]
         if headless:
             flags.append("--headless=new")
@@ -72,15 +66,9 @@ class Browser:
         if extra_flags:
             flags.extend(extra_flags)
 
-        def place_fds():
-            os.dup2(chrome_in, 3); os.dup2(chrome_out, 4)
-            os.set_inheritable(3, True); os.set_inheritable(4, True)
-
-        self.process = subprocess.Popen(
-            flags, pass_fds=(chrome_in, chrome_out, 3, 4), preexec_fn=place_fds,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        os.close(chrome_in); os.close(chrome_out)
-        self.cdp = PipeConnection(parent_out, parent_in)
+        spawn = _spawn_windows if sys.platform == "win32" else _spawn_posix
+        self.process, command_fd, event_fd = spawn(flags)
+        self.cdp = PipeConnection(command_fd, event_fd)
 
     def close(self):
         try:
@@ -96,3 +84,96 @@ class Browser:
             except Exception:
                 pass
         shutil.rmtree(self.user_data_dir, ignore_errors=True)
+
+
+# Chrome reads CDP commands from fd 3, writes events to fd 4, on every platform.
+def _spawn_posix(flags):
+    chrome_in, parent_out = os.pipe()
+    parent_in, chrome_out = os.pipe()
+    for fd in (chrome_in, parent_out, parent_in, chrome_out):
+        os.set_inheritable(fd, True)
+
+    def place_fds():
+        os.dup2(chrome_in, 3); os.dup2(chrome_out, 4)
+        os.set_inheritable(3, True); os.set_inheritable(4, True)
+
+    process = subprocess.Popen(
+        flags, pass_fds=(chrome_in, chrome_out, 3, 4), preexec_fn=place_fds,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(chrome_in); os.close(chrome_out)
+    return process, parent_out, parent_in
+
+
+# Windows has no preexec_fn: the child's msvcrt rebuilds its fd table from a CRT
+# inherited-fd block passed as STARTUPINFO.lpReserved2, which subprocess/_winapi do
+# not expose — so launch via ctypes CreateProcessW with a hand-built block.
+def _spawn_windows(flags):
+    import msvcrt, _winapi, struct, ctypes
+    from ctypes import wintypes
+
+    cmd_r, cmd_w = _winapi.CreatePipe(0, 0)   # child reads cmd_r at fd 3; parent writes cmd_w
+    evt_r, evt_w = _winapi.CreatePipe(0, 0)   # child writes evt_w at fd 4; parent reads evt_r
+    os.set_handle_inheritable(cmd_r, True)
+    os.set_handle_inheritable(evt_w, True)
+
+    # block = int32 count + per-fd CRT flag bytes + pointer-sized handles.
+    INVALID = (1 << (8 * ctypes.sizeof(ctypes.c_void_p))) - 1
+    FOPEN, FPIPE = 0x01, 0x08
+    fd_flags = bytes([0, 0, 0, FOPEN | FPIPE, FOPEN | FPIPE])
+    handles = [INVALID, INVALID, INVALID, cmd_r, evt_w]
+    block = struct.pack("I", len(handles)) + fd_flags + b"".join(struct.pack("P", h) for h in handles)
+
+    class STARTUPINFOW(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR),
+                    ("lpDesktop", wintypes.LPWSTR), ("lpTitle", wintypes.LPWSTR),
+                    ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
+                    ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD),
+                    ("dwXCountChars", wintypes.DWORD), ("dwYCountChars", wintypes.DWORD),
+                    ("dwFillAttribute", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD),
+                    ("lpReserved2", ctypes.POINTER(ctypes.c_byte)),
+                    ("hStdInput", wintypes.HANDLE), ("hStdOutput", wintypes.HANDLE),
+                    ("hStdError", wintypes.HANDLE)]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [("hProcess", wintypes.HANDLE), ("hThread", wintypes.HANDLE),
+                    ("dwProcessId", wintypes.DWORD), ("dwThreadId", wintypes.DWORD)]
+
+    buf = (ctypes.c_byte * len(block)).from_buffer_copy(block)
+    si = STARTUPINFOW()
+    si.cb = ctypes.sizeof(STARTUPINFOW)
+    si.cbReserved2 = len(block)
+    si.lpReserved2 = ctypes.cast(buf, ctypes.POINTER(ctypes.c_byte))
+    pi = PROCESS_INFORMATION()
+
+    CREATE_NO_WINDOW = 0x08000000
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateProcessW.restype = wintypes.BOOL
+    ok = kernel32.CreateProcessW(
+        None, ctypes.create_unicode_buffer(subprocess.list2cmdline(flags)), None, None,
+        True, CREATE_NO_WINDOW, None, None, ctypes.byref(si), ctypes.byref(pi))
+    if not ok:
+        raise ctypes.WinError()
+
+    kernel32.CloseHandle(pi.hThread)
+    _winapi.CloseHandle(cmd_r); _winapi.CloseHandle(evt_w)   # the child owns these now
+    command_fd = msvcrt.open_osfhandle(cmd_w, os.O_BINARY)
+    event_fd = msvcrt.open_osfhandle(evt_r, os.O_BINARY)
+    return _WinProcess(pi.hProcess, pi.dwProcessId), command_fd, event_fd
+
+
+class _WinProcess:
+    # subprocess.Popen-shaped enough for Browser.close().
+    def __init__(self, handle, pid):
+        self._handle, self.pid = handle, pid
+
+    def terminate(self):
+        import ctypes
+        ctypes.windll.kernel32.TerminateProcess(self._handle, 1)
+
+    kill = terminate
+
+    def wait(self, timeout=None):
+        import ctypes
+        ms = 0xFFFFFFFF if timeout is None else int(timeout * 1000)
+        ctypes.windll.kernel32.WaitForSingleObject(self._handle, ms)

@@ -92,8 +92,8 @@ def gw_verify(real_fn_expr: str, candidate: str, label: str = "", fresh_inputs: 
     "key. Returns each match's constructor, the holding property, its heap id, and a short "
     "retaining path to a GC root — i.e. where the value lives and what reaches it. Takes a fresh "
     "snapshot of the page (or a worker/iframe via target_url) each call."))
-def gw_objects(value: str = "", constructor: str = "", key: str = "", target_url: str = "", limit: int = 20) -> str:
-    matches = gw().find_objects(value=value or None, constructor=constructor or None,
+def gw_objects(value: str = "", constructor_name: str = "", key: str = "", target_url: str = "", limit: int = 20) -> str:
+    matches = gw().find_objects(value=value or None, constructor=constructor_name or None,
                                 key=key or None, target_url=target_url or None, limit=limit)
     return json.dumps(matches, indent=1, default=str)
 
@@ -155,13 +155,13 @@ def gw_heapdiff(trigger: str, target_url: str = "", wait_ms: int = 300) -> str:
     "object of properties to assign (returns before/after for those keys); apply is a JS function "
     "expression run with `this` bound to the object (toggle a flag, replace a callback, read state). "
     "Use it to force state and see what breaks without touching the UI."))
-def gw_patch(value: str = "", constructor: str = "", key: str = "", node_id: int = 0,
+def gw_patch(value: str = "", constructor_name: str = "", key: str = "", node_id: int = 0,
              set_props: str = "", apply: str = "", target_url: str = "") -> str:
     try:
         assign = json.loads(set_props) if set_props.strip() else None
     except Exception as e:
         return json.dumps({"error": f"set_props must be a JSON object: {e}"})
-    result = gw().patch(node_id=node_id or None, value=value or None, constructor=constructor or None,
+    result = gw().patch(node_id=node_id or None, value=value or None, constructor=constructor_name or None,
                         key=key or None, assign=assign, apply=apply or None, target_url=target_url or None)
     return json.dumps(result, indent=1, default=str)
 
